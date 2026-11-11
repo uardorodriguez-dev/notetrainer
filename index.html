@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Note Trainer</title>
+
+  <!-- VexFlow draws the music notation. It loads from the internet, so you need to be online. -->
+  <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.5/build/cjs/vexflow.js"></script>
+
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f6f4ef;
+      color: #222;
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 24px 16px;
+      text-align: center;
+    }
+    h1 { margin-bottom: 4px; }
+    .scoreboard { display: flex; justify-content: center; gap: 24px; margin: 12px 0; font-size: 1.1rem; }
+    #staff { background: white; border-radius: 12px; padding: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+    #feedback { min-height: 32px; margin: 12px 0; font-size: 1.3rem; font-weight: 600; }
+    .good { color: #1b8a3a; }
+    .bad  { color: #c0392b; }
+    .buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    .buttons button {
+      font-size: 1.5rem; width: 56px; height: 56px;
+      border: 2px solid #444; border-radius: 10px;
+      background: white; cursor: pointer;
+    }
+    .buttons button:hover { background: #ece8dc; }
+    .buttons button.sel { background: #d9e8d4; border-color: #1b8a3a; }
+    #accButtons { margin-bottom: 6px; }
+    #accButtons button { width: 48px; height: 48px; font-size: 1.3rem; }
+    .hint { font-size: 0.85rem; color: #666; margin: 4px 0 12px; }
+    /* Keep the staff inside the screen on narrow phones. */
+    #staff svg { display: block; margin: 0 auto; max-width: 100%; height: auto !important; }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid #1a5fb4; outline-offset: 2px; }
+    #micNote { font-size: 0.9rem; color: #555; margin: 0 0 10px; }
+    #debugInfo {
+      display: none; text-align: left; font: 0.85rem/1.5 ui-monospace, Menlo, Consolas, monospace;
+      background: #f1efe7; border-radius: 8px; padding: 8px 12px; margin: 8px auto 0;
+      max-width: 360px; white-space: pre-wrap;
+    }
+    .options { margin-top: 20px; display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; }
+    /* Menus: tall enough for a child's finger (44px), and never wider than the screen. */
+    select { font-size: 1rem; padding: 4px 8px; min-height: 44px; max-width: 100%; }
+    .options label, .micOptions label { display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 100%; }
+    label.hint { display: inline-block; padding: 10px 0; }
+    input[type="checkbox"] { width: 22px; height: 22px; vertical-align: middle; }
+    #staffError { padding: 24px 12px; color: #c0392b; font-weight: 600; }
+
+    /* Microphone panel */
+    #micPanel { display: none; background: white; border-radius: 12px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+    #micToggle {
+      font-size: 1.1rem; padding: 10px 20px; border: 2px solid #444;
+      border-radius: 10px; background: #ece8dc; cursor: pointer;
+    }
+    #micCalibrate, #micCalibrateNote {
+      display: none; font-size: 0.95rem; padding: 6px 12px; margin: 8px 0 0 8px; min-height: 44px;
+      border: 2px solid #444; border-radius: 8px; background: white; cursor: pointer;
+    }
+    #micStatus { margin: 10px 0 4px; color: #555; min-height: 1.3em; }
+    #hearing { font-size: 1.6rem; font-weight: 600; min-height: 2.2rem; }
+    #meter { height: 10px; background: #e4e0d4; border-radius: 5px; overflow: hidden; margin: 8px auto; max-width: 260px; }
+    #meterFill { height: 100%; width: 0%; background: #1b8a3a; transition: width 0.05s; }
+    .micOptions { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+
+  <h1>Note Trainer</h1>
+  <p>What note is this?</p>
+
+  <div class="scoreboard">
+    <span>Score: <strong id="score">0</strong> / <strong id="total">0</strong></span>
+    <span>Streak: <strong id="streak">0</strong></span>
+  </div>
+
+  <div id="staff" role="img" aria-label="Music staff showing one note"></div>
+  <div class="hint" id="guitarHint" style="display:none">Guitar music is written an octave above where it sounds. For example, the G on the second line is your open G string.</div>
+  <div id="feedback" role="status" aria-live="polite"></div>
+
+  <!-- Button mode -->
+  <div id="accRow" style="display:none">
+    <div class="buttons" id="accButtons"></div>
+    <div class="hint">Pick ♭ ♮ ♯ first, then the letter. Keyboard: # sharp, - flat, n natural.</div>
+  </div>
+  <div class="buttons" id="buttons"></div>
+
+  <!-- Microphone mode -->
+  <div id="micPanel">
+    <p id="micNote"></p>
+    <div class="micOptions">
+      <label>Sound filter:
+        <select id="listenMode">
+          <option value="strict">Plucked or struck notes only (ignores voices and noise)</option>
+          <option value="any">Any sound (voice, wind, bowed strings)</option>
+        </select>
+      </label>
+      <label>Octave:
+        <select id="octaveMode">
+          <option value="any">Any octave</option>
+          <option value="exact">Exact octave</option>
+        </select>
+      </label>
+    </div>
+    <button id="micToggle">Start microphone</button><button id="micCalibrateNote">Calibrate with my instrument</button><button id="micCalibrate">Re-measure room</button>
+    <div id="micStatus" role="status" aria-live="polite"></div>
+    <div id="meter"><div id="meterFill"></div></div>
+    <div id="hearing"></div>
+    <label class="hint"><input type="checkbox" id="debugMode"> Show technical details</label>
+    <div id="debugInfo"></div>
+  </div>
+
+  <div class="options">
+    <label>Instrument:
+      <select id="instrument">
+        <option value="piano">Piano / voice (sounds as written)</option>
+        <option value="guitar">Guitar (sounds an octave lower than written)</option>
+      </select>
+    </label>
+    <label>Answer with:
+      <select id="mode">
+        <option value="buttons">Buttons</option>
+        <option value="mic">Microphone</option>
+      </select>
+    </label>
+    <label>Clef:
+      <select id="clef">
+        <option value="treble">Treble</option>
+        <option value="bass">Bass</option>
+      </select>
+    </label>
+    <label>Accidentals:
+      <select id="accidentals">
+        <option value="off">Naturals only</option>
+        <option value="on">Sharps &amp; flats</option>
+      </select>
+    </label>
+  </div>
+
+  <p class="hint" style="margin-top:24px">No sign-up. This page collects no information: settings stay on this device, and microphone sound is analysed here and never sent anywhere.</p>
+
+<script>
+  // ---------- 1. MUSIC THEORY ----------
+  // This block is pure music logic: no screen and no microphone. That keeps it easy to test,
+  // and later games can reuse it as it is.
+  // BEGIN THEORY
+  const LETTERS = ['c', 'd', 'e', 'f', 'g', 'a', 'b'];
+
+  // Semitones above C for each natural note. Used to turn a note into a MIDI number
+  // (MIDI numbers: middle C = 60, A4 = 69, each semitone is +1).
+  const SEMI = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
+  const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+  // A sound alone doesn't say how a black key is spelled (F♯ and G♭ are the same pitch),
+  // so anything heard through the microphone is shown with both names.
+  const PITCH_LABELS = ['C', 'C♯/D♭', 'D', 'D♯/E♭', 'E', 'F', 'F♯/G♭', 'G', 'G♯/A♭', 'A', 'A♯/B♭', 'B'];
+
+  // A written note looks like { letter: 'g', octave: 4, acc: '' }, where acc is '' (natural),
+  // '#' (sharp) or 'b' (flat). Its "number" is octave * 7 + position of its letter (c=0 ... b=6),
+  // so moving up one line-or-space on the staff adds 1.
+  // Treble: E4 sits on the bottom line. Bass: G2 sits on the bottom line.
+  const BOTTOM_LINE = { treble: 4 * 7 + 2, bass: 2 * 7 + 4 };
+  // Treble staff: E4 (bottom line) to F5 (top line). Bass staff: G2 (bottom line) to A3 (top line).
+  const RANGES = {
+    treble: { low: 4 * 7 + 2, high: 5 * 7 + 3 },
+    bass:   { low: 2 * 7 + 4, high: 3 * 7 + 5 },
+    // Guitar is written an octave higher than it sounds, in treble clef.
+    // Written E3 (below the staff, 3 ledger lines) = low E string, open.
+    // Written E6 (above the staff, 3 ledger lines) = 12th fret of the high E string.
+    guitar: { low: 3 * 7 + 2, high: 6 * 7 + 2 }
+  };
+
+  function noteToMidi(note) {
+    const shift = note.acc === '#' ? 1 : note.acc === 'b' ? -1 : 0;
+    return 12 * (note.octave + 1) + SEMI[note.letter] + shift;
+  }
+  // The note as a student would say it, e.g. "B♭" or "F♯".
+  function noteName(note) {
+    return note.letter.toUpperCase() + (note.acc === '#' ? '♯' : note.acc === 'b' ? '♭' : '');
+  }
+  function pitchLabel(midi) { return PITCH_LABELS[((midi % 12) + 12) % 12]; }
+  function fullName(midi) { return NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1); }
+  function midiToFreq(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
+
+  // The pitch that actually SOUNDS when a written note is played. Guitar is written an octave
+  // higher than it sounds. Piano and voice sound as written.
+  function soundingMidi(note, instrument) {
+    const written = noteToMidi(note);
+    return instrument === 'guitar' ? written - 12 : written;
+  }
+
+  // Where a written note sits on its staff. step 0 is the bottom line, 1 the first space,
+  // 2 the second line ... 8 the top line. Below 0 or above 8 it needs ledger lines.
+  function staffPosition(note, clef) {
+    const step = note.octave * 7 + LETTERS.indexOf(note.letter) - BOTTOM_LINE[clef];
+    let ledgerLines = 0, side = 'inside';
+    if (step < 0) { side = 'below'; ledgerLines = Math.floor(-step / 2); }
+    else if (step > 8) { side = 'above'; ledgerLines = Math.floor((step - 8) / 2); }
+    return { step: step, ledgerLines: ledgerLines, side: side };
+  }
+  // END THEORY
+
+  function isGuitar() { return document.getElementById('instrument').value === 'guitar'; }
+  // Guitar music is always read in treble clef, so the clef menu is ignored for guitar.
+  function currentClef() { return isGuitar() ? 'treble' : document.getElementById('clef').value; }
+  function getRange(clef) { return isGuitar() ? RANGES.guitar : RANGES[clef]; }
+
+  // ---------- 2. GAME STATE ----------
+  let currentNote = null;   // e.g. { letter: 'e', octave: 4, number: 30 }
+  let score = 0, total = 0, streak = 0;
+  let locked = false;       // stops double answers while feedback is showing
+  let selectedAcc = '';     // sharp/flat chosen in button mode: '' (natural), '#' or 'b'
+  let attempted = false;    // has the student already answered this note? (mic mode)
+  let nextTimer = null;     // the pause before the next note; cleared if a new note is drawn sooner
+  function scheduleNext(ms) { clearTimeout(nextTimer); nextTimer = setTimeout(nextQuestion, ms); }
+
+  // ---------- 3. PICK A RANDOM NOTE ----------
+  function pickRandomNote(clef) {
+    const { low, high } = getRange(clef);
+    const accidentalsOn = document.getElementById('accidentals').value === 'on';
+    let n, acc;
+    do {
+      n = Math.floor(Math.random() * (high - low + 1)) + low;
+      acc = '';
+      if (accidentalsOn && Math.random() < 0.5) {
+        const letter = LETTERS[n % 7];
+        const options = [];
+        // Skip spellings nobody reads (E#, B#, Cb, Fb) and notes that would fall
+        // outside the range: a flat on the lowest note, a sharp on the highest.
+        if (letter !== 'e' && letter !== 'b' && n !== high) options.push('#');
+        if (letter !== 'c' && letter !== 'f' && n !== low) options.push('b');
+        if (options.length) acc = options[Math.floor(Math.random() * options.length)];
+      }
+      // never the same note twice in a row
+    } while (currentNote && n === currentNote.number && acc === currentNote.acc);
+    return { number: n, letter: LETTERS[n % 7], octave: Math.floor(n / 7), acc: acc };
+  }
+
+  // ---------- 4. DRAW THE NOTE ----------
+  // Returns true when the note was drawn, false when the notation library is missing.
+  function drawNote(note, clef) {
+    const div = document.getElementById('staff');
+    div.innerHTML = '';
+
+    // VexFlow comes from the internet. If it didn't load (offline, or a school network that blocks it),
+    // say so, instead of showing a blank staff that students can't read.
+    if (typeof Vex === 'undefined') {
+      div.innerHTML = '<div id="staffError">The music staff could not load. Check your internet connection, then reload the page.</div>';
+      return false;
+    }
+    const { Renderer, Stave, StaveNote, Voice, Formatter, Accidental } = Vex.Flow;
+
+    const renderer = new Renderer(div, Renderer.Backends.SVG);
+    renderer.resize(420, 220);
+    const context = renderer.getContext();
+    context.scale(1.4, 1.4);
+
+    const stave = new Stave(10, 20, 270);
+    stave.addClef(clef).setContext(context).draw();
+
+    const vfNote = new StaveNote({
+      clef: clef,
+      keys: [`${note.letter}${note.acc}/${note.octave}`],     // e.g. "f#/4" or "bb/4"
+      duration: 'w'
+    });
+    if (note.acc) vfNote.addModifier(new Accidental(note.acc), 0);   // draws the ♯ or ♭ symbol
+
+    const voice = new Voice({ num_beats: 4, beat_value: 4 });
+    voice.addTickables([vfNote]);
+    new Formatter().joinVoices([voice]).format([voice], 150);
+    voice.draw(context, stave);
+
+    // Let the drawing shrink to fit narrow screens (the CSS above does the shrinking;
+    // it needs the drawing to know its own proportions).
+    const svg = div.querySelector('svg');
+    if (svg && !svg.getAttribute('viewBox')) svg.setAttribute('viewBox', '0 0 420 220');
+    return true;
+  }
+
+  // ---------- 5. NEXT QUESTION ----------
+  function nextQuestion() {
+    clearTimeout(nextTimer);
+    const clef = currentClef();
+    currentNote = pickRandomNote(clef);
+    const drawn = drawNote(currentNote, clef);
+    document.getElementById('feedback').textContent = '';
+    locked = !drawn;          // no staff on screen means nothing to answer, so don't score anything
+    attempted = false;
+    setAcc('');
+    updateMicNote();
+  }
+
+  // ---------- 6. CHECK THE ANSWER (BUTTON MODE) ----------
+  function answer(letter) {
+    if (locked) return;
+    locked = true;
+    total++;
+
+    const feedback = document.getElementById('feedback');
+    if (letter === currentNote.letter && selectedAcc === currentNote.acc) {
+      score++;
+      streak++;
+      feedback.textContent = 'Correct!';
+      feedback.className = 'good';
+    } else {
+      streak = 0;
+      feedback.textContent = `Not quite. That was ${noteName(currentNote)}.`;
+      feedback.className = 'bad';
+    }
+    updateScoreboard();
+    scheduleNext(1100);
+  }
+
+  function updateScoreboard() {
+    document.getElementById('score').textContent = score;
+    document.getElementById('total').textContent = total;
+    document.getElementById('streak').textContent = streak;
+  }
+
+  // ---------- 7. PITCH DETECTION (YIN algorithm) ----------
+  // Takes a chunk of microphone audio and finds its pitch.
+  // Returns { freq, clarity } or null if it can't find a clear pitch.
+  // Clarity is 0 to 1: higher means a cleaner, more confident reading.
+  // BEGIN YIN
+  function yinDetect(buf, sampleRate, minFreq = 70, maxFreq = 1200, threshold = 0.15) {
+    const W = Math.floor(buf.length / 2);                       // window we compare
+    const tauMax = Math.min(Math.floor(sampleRate / minFreq), W);
+    const tauMin = Math.max(2, Math.floor(sampleRate / maxFreq));
+
+    // Step 1: how different is the sound from a copy of itself shifted by tau samples?
+    const d = new Float32Array(tauMax + 1);
+    for (let tau = 1; tau <= tauMax; tau++) {
+      let sum = 0;
+      for (let i = 0; i < W; i++) {
+        const diff = buf[i] - buf[i + tau];
+        sum += diff * diff;
+      }
+      d[tau] = sum;
+    }
+
+    // Step 2: normalize so quiet and loud sounds are treated the same.
+    const cm = new Float32Array(tauMax + 1);
+    cm[0] = 1;
+    let running = 0;
+    for (let tau = 1; tau <= tauMax; tau++) {
+      running += d[tau];
+      cm[tau] = running === 0 ? 1 : (d[tau] * tau) / running;
+    }
+
+    // Step 3: take the FIRST clear dip (this is what avoids octave-too-low mistakes).
+    let tauEst = -1;
+    for (let tau = tauMin; tau < tauMax; tau++) {
+      if (cm[tau] < threshold) {
+        while (tau + 1 < tauMax && cm[tau + 1] < cm[tau]) tau++;
+        tauEst = tau;
+        break;
+      }
+    }
+    if (tauEst === -1) return null;
+
+    // Step 4: refine between samples for accuracy.
+    let refined = tauEst;
+    if (tauEst > 1 && tauEst < tauMax) {
+      const x0 = cm[tauEst - 1], x1 = cm[tauEst], x2 = cm[tauEst + 1];
+      const denom = x0 + x2 - 2 * x1;
+      if (denom !== 0) refined = tauEst + (x0 - x2) / (2 * denom);
+    }
+    return { freq: sampleRate / refined, clarity: 1 - cm[tauEst] };
+  }
+  // END YIN
+
+  // ---------- 8. MICROPHONE MODE ----------
+  const FRAME_MS = 50;           // check the microphone 20 times a second
+  const STABLE_FRAMES = 5;       // the same note must be heard for 5 checks (about 1/4 second)
+  const MIN_CLARITY = 0.85;      // ignore unclear readings
+  const CAL_FRAMES = 20;         // calibration listens to the room for about 1 second
+  const ONSET_WINDOW_MS = 1500;  // strict mode: how long after a note starts we wait for a steady pitch
+  const MAX_PITCH_SPREAD = 0.4;  // strict mode: the pitch may wander at most 40 cents (0.4 of a semitone)
+  const READY_TEXT = 'Listening... play the note on your instrument.';
+  const NOTE_CAL_FRAMES = 34;    // "Calibrate with my instrument" listens to about 1.7 seconds of a held note
+  const NOTE_CAL_WAIT_MS = 10000; // ...and gives up if nothing is played for 10 seconds
+
+  // ---------- NOISE FILTERS ----------
+  // These three small functions are what separate a struck or plucked instrument from
+  // voices and background noise.
+  // BEGIN FILTERS
+
+  // 1) Look for the "attack": the sudden jump in loudness when a key is struck or a string
+  //    is plucked. Speech, humming and steady noise build up gradually, so they don't match.
+  //    Returns the positions (in samples) where a sharp attack begins.
+  function detectOnsets(buf, sampleRate, gate) {
+    const C = 64;                                                    // work in chunks of 64 samples (about 1.3 ms)
+    const n = Math.floor(buf.length / C);
+    const span = Math.max(2, Math.round(sampleRate * 0.012 / C));    // 12 ms = one cycle of the lowest guitar note
+    const L40 = Math.max(4, Math.round(sampleRate * 0.040 / C));     // look 40 ms ahead
+
+    // Loudness envelope: the biggest sample seen over the last 12 ms.
+    const peak = new Float32Array(n);
+    for (let k = 0; k < n; k++) {
+      let m = 0;
+      for (let i = k * C; i < (k + 1) * C; i++) { const a = Math.abs(buf[i]); if (a > m) m = a; }
+      peak[k] = m;
+    }
+    const env = new Float32Array(n);
+    for (let k = 0; k < n; k++) {
+      let m = 0;
+      for (let j = Math.max(0, k - span + 1); j <= k; j++) if (peak[j] > m) m = peak[j];
+      env[k] = m;
+    }
+
+    // An attack = the envelope jumps past the gate AND past twice its recent level, and
+    // reaches most of its volume within 12 ms. A voice swells up over tens of milliseconds,
+    // so after 12 ms it is still well short of where it is heading.
+    // It must also come out of a steady background (silence, or a note that is simply fading).
+    // A signal that is already climbing is part of a swell, not a new attack.
+    const found = [];
+    for (let k = 2 * span; k < n - L40; k++) {
+      let before = 0, lowest = Infinity;
+      for (let j = k - 2 * span; j <= k - span; j++) {       // the 12 ms window that ended 12 ms ago
+        if (env[j] > before) before = env[j];
+        if (env[j] < lowest) lowest = env[j];
+      }
+      const steadyBefore = before <= 1.8 * Math.max(lowest, 0.75 * gate);
+      const threshold = Math.max(gate, 2 * before);
+      if (steadyBefore && env[k] >= threshold && env[k - 1] < threshold) {
+        let top = 0;
+        for (let j = k; j <= k + L40; j++) if (env[j] > top) top = env[j];
+        if (env[k + span] >= 0.7 * top) {
+          found.push(k * C);
+          k += span;                                                 // count each attack once
+        } else {
+          k += L40;                                                  // a slow swell (a voice): don't re-judge its tail as a new attack
+        }
+      }
+    }
+    return found;
+  }
+
+  // 2) Is the pitch steady? A struck or plucked note holds one pitch. Voices drift and wobble.
+  function steadyPitch(pitches, maxSpread) {
+    return Math.max(...pitches) - Math.min(...pitches) <= maxSpread;
+  }
+
+  // 3) Set the volume gate from a short recording of the quiet room.
+  function gateFromNoise(samples) {
+    const sorted = samples.slice().sort((a, b) => a - b);
+    const floor = sorted[Math.floor(0.9 * (sorted.length - 1))];
+    const raw = floor * 4;                                           // gate sits well above the room noise
+    return { gate: Math.min(0.06, Math.max(0.005, raw)), floor: floor, tooLoud: raw > 0.06 };
+  }
+  // END FILTERS
+
+  const MIC = {
+    running: false, ctx: null, analyser: null, stream: null, timer: null, buf: null,
+    candidate: null, pitches: [], quietMs: 0, lastAnswered: null, pausedUntil: 0,
+    gate: 0.01, calibrating: false, calSamples: [], lastOnset: 0, lastAnswerTime: 0, dbg: {},
+    floor: 0.004, noteCal: null, why: '', whyAt: 0, unclear: 0
+  };
+
+  const el = id => document.getElementById(id);
+
+  // The pitch the student should be PLAYING for the note on screen.
+  function expectedMidi() {
+    return soundingMidi(currentNote, el('instrument').value);
+  }
+
+  function setHearing(text) { el('hearing').textContent = text; }
+
+  async function startMic() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      el('micStatus').textContent =
+        'This browser is blocking the microphone here. Open the hosted (https) link of this page; on iPhone, use Safari. On a computer, opening the file in Chrome also works.';
+      return;
+    }
+    // iPhones and iPads only let audio start during the tap itself, so the audio engine is created and
+    // started here, BEFORE waiting for microphone permission (after the wait, the tap no longer counts).
+    const AC = window.AudioContext || window.webkitAudioContext;
+    MIC.ctx = new AC();
+    if (MIC.ctx.state === 'suspended' && MIC.ctx.resume) MIC.ctx.resume().catch(() => {});
+    try {
+      // Turn off the phone/computer "voice cleanup" features. They distort music.
+      MIC.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      });
+    } catch (err) {
+      if (MIC.ctx && MIC.ctx.close) MIC.ctx.close();
+      MIC.ctx = null;
+      // Say what actually went wrong instead of one generic message.
+      let msg;
+      if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+        msg = 'The browser blocked the microphone. If this page is open inside a preview pane or an embedded window, ' +
+              'download the file and open it directly in Chrome, or use the hosted version. ' +
+              'Otherwise, allow the microphone in the site settings (the icon left of the address bar) and press Start again.';
+      } else if (err.name === 'NotFoundError') {
+        msg = 'No microphone was found. Check that one is plugged in and selected in your system sound settings.';
+      } else if (err.name === 'NotReadableError') {
+        msg = 'The microphone is busy or unavailable. Close other apps that might be using it (Zoom, a recorder) and try again.';
+      } else {
+        msg = `Could not start the microphone (${err.name}: ${err.message}).`;
+      }
+      el('micStatus').textContent = msg;
+      return;
+    }
+
+    if (MIC.ctx.state === 'suspended' && MIC.ctx.resume) MIC.ctx.resume().catch(() => {});
+
+    const source = MIC.ctx.createMediaStreamSource(MIC.stream);
+    MIC.analyser = MIC.ctx.createAnalyser();
+    MIC.analyser.fftSize = 8192;                // about 0.17 s of sound: room to see a note's attack
+    source.connect(MIC.analyser);               // not connected to speakers, so no echo
+    MIC.buf = new Float32Array(MIC.analyser.fftSize);
+
+    MIC.candidate = null; MIC.pitches = []; MIC.quietMs = 0;
+    MIC.lastAnswered = null; MIC.pausedUntil = 0;
+    MIC.lastOnset = 0; MIC.lastAnswerTime = 0;
+    MIC.timer = setInterval(micTick, FRAME_MS);
+    MIC.running = true;
+
+    el('micToggle').textContent = 'Stop microphone';
+    el('micCalibrate').style.display = 'inline-block';
+    el('micCalibrateNote').style.display = 'inline-block';
+    MIC.why = '';
+    beginCalibration();
+  }
+
+  // Listen to the quiet room for about a second and set the volume gate from it.
+  function beginCalibration() {
+    MIC.calibrating = true;
+    MIC.noteCal = null;
+    MIC.calSamples = [];
+    MIC.candidate = null; MIC.pitches = [];
+    el('micStatus').textContent = 'Calibrating... stay quiet for a second.';
+  }
+
+  function finishCalibration() {
+    const result = gateFromNoise(MIC.calSamples);
+    MIC.gate = result.gate;
+    MIC.floor = result.floor;
+    MIC.calibrating = false;
+    el('micStatus').textContent = result.tooLoud
+      ? 'It is quite noisy here. Move closer to your instrument or find a quieter spot, then press "Re-measure room".'
+      : READY_TEXT + ' If it does not hear you, press "Calibrate with my instrument".';
+  }
+
+  // ---------- CALIBRATE WITH MY INSTRUMENT ----------
+  // Measuring the empty room only says how noisy it is. This step also listens to the student's own
+  // instrument: play one note and hold it for about two seconds. The volume gate is then set between the
+  // room noise and how loud that note still is one second after it started, so a held note keeps counting.
+  function beginNoteCalibration() {
+    if (!MIC.running || MIC.calibrating) return;
+    MIC.noteCal = { floor: MIC.floor, waited: 0, started: false, frames: [], attack: false };
+    MIC.candidate = null; MIC.pitches = [];
+    MIC.why = '';
+    el('micStatus').textContent = 'Play one note on your instrument and hold it for about 2 seconds...';
+  }
+
+  function noteCalStep(rms, recent, sampleRate) {
+    const nc = MIC.noteCal;
+    if (!nc.started) {
+      nc.waited += FRAME_MS;
+      if (rms > Math.max(2 * nc.floor, 0.003)) nc.started = true;
+      else {
+        if (nc.waited >= NOTE_CAL_WAIT_MS) {
+          endNoteCalibration("I didn't hear anything. Check that the right microphone is selected in your computer's sound settings, then try again.");
+        }
+        return;
+      }
+    }
+    if (detectOnsets(MIC.buf, sampleRate, Math.max(0.005, 3 * nc.floor) * 1.5).length) nc.attack = true;
+    const r = yinDetect(recent, sampleRate);
+    nc.frames.push({ rms: rms, clarity: r ? r.clarity : 0, midi: r ? Math.round(69 + 12 * Math.log2(r.freq / 440)) : null });
+    if (nc.frames.length >= NOTE_CAL_FRAMES) finishNoteCalibration();
+  }
+
+  function finishNoteCalibration() {
+    const nc = MIC.noteCal, f = nc.frames;
+    const median = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor((s.length - 1) / 2)]; };
+    const held = median(f.slice(16, 25).map(x => x.rms));          // how loud it still is about one second in
+
+    // The longest stretch of one note heard clearly.
+    let best = { len: 0, midi: null, clarity: 0 }, run = null;
+    f.forEach(x => {
+      const clear = x.midi !== null && x.clarity >= MIN_CLARITY;
+      if (clear && run && run.midi === x.midi) { run.len++; run.sum += x.clarity; }
+      else run = clear ? { midi: x.midi, len: 1, sum: x.clarity } : null;
+      if (run && run.len > best.len) best = { len: run.len, midi: run.midi, clarity: run.sum / run.len };
+    });
+
+    if (held < 1.5 * nc.floor) {
+      endNoteCalibration(`I could barely hear that note one second after you played it (level ${held.toFixed(3)}, room noise ${nc.floor.toFixed(3)}). ` +
+        'Move the microphone closer to your instrument, or raise the microphone volume in your computer\'s sound settings, then try again.');
+      return;
+    }
+
+    MIC.gate = Math.min(0.06, Math.max(0.003, 1.5 * nc.floor, Math.sqrt(nc.floor * held)));
+    const parts = [];
+    if (best.len >= 5) parts.push(`Heard ${pitchLabel(best.midi)} steadily for ${(best.len * FRAME_MS / 1000).toFixed(1)} seconds (${Math.round(best.clarity * 100)}% sure).`);
+    else parts.push('I could hear it, but not as one clear note. Play a single string (or key) and keep the microphone close.');
+    if (el('listenMode').value === 'strict' && !nc.attack) {
+      el('listenMode').value = 'any';
+      saveSettings();
+      parts.push('That note did not start sharply enough for "plucked or struck notes only", so I switched the Sound filter to "Any sound".');
+    }
+    parts.push('Microphone is set up for your instrument.');
+    endNoteCalibration(parts.join(' '));
+  }
+
+  function endNoteCalibration(message) {
+    MIC.noteCal = null;
+    MIC.candidate = null; MIC.pitches = [];
+    MIC.lastAnswered = null; MIC.lastOnset = 0;
+    MIC.pausedUntil = performance.now() + 400;
+    MIC.why = '';
+    el('micStatus').textContent = message;
+  }
+
+  // A short plain-English reason, shown while the game is deliberately ignoring a sound.
+  // A message stays up for at least 4 seconds, so it can still be read after the sound has faded.
+  function setWhy(text, force) {
+    const now = performance.now();
+    if (MIC.why === text) return;
+    if (!text && !force && MIC.why && now - MIC.whyAt < 4000) return;
+    MIC.why = text;
+    MIC.whyAt = now;
+    if (!MIC.calibrating && !MIC.noteCal) el('micStatus').textContent = text || READY_TEXT;
+  }
+
+  function stopMic() {
+    if (MIC.timer) clearInterval(MIC.timer);
+    if (MIC.stream) MIC.stream.getTracks().forEach(t => t.stop());
+    if (MIC.ctx) MIC.ctx.close();
+    MIC.running = false; MIC.timer = null; MIC.stream = null; MIC.ctx = null;
+    MIC.calibrating = false; MIC.noteCal = null; MIC.why = '';
+    el('micToggle').textContent = 'Start microphone';
+    el('micCalibrate').style.display = 'none';
+    el('micCalibrateNote').style.display = 'none';
+    el('debugInfo').textContent = '';
+    el('micStatus').textContent = '';
+    el('meterFill').style.width = '0%';
+    setHearing('');
+  }
+
+  // Runs 20 times a second while the microphone is on.
+  function micTick() {
+    MIC.dbg = { gate: MIC.gate };
+    micStep();
+    renderDebug();
+  }
+
+  // The "Show technical details" panel: what the microphone code is seeing right now.
+  function renderDebug() {
+    const box = el('debugInfo');
+    if (!el('debugMode').checked) { box.style.display = 'none'; return; }
+    const d = MIC.dbg || {};
+    const f = (v, digits) => (typeof v === 'number' ? v.toFixed(digits) : '-');
+    box.style.display = 'block';
+    box.textContent =
+      `Level ${f(d.rms, 3)}   Gate ${f(d.gate, 3)}\n` +
+      `Frequency ${f(d.freq, 1)} Hz   Confidence ${typeof d.clarity === 'number' ? Math.round(d.clarity * 100) + '%' : '-'}\n` +
+      `Nearest note ${typeof d.midi === 'number' ? fullName(d.midi) : '-'}   Off by ${typeof d.cents === 'number' ? d.cents + ' cents' : '-'}\n` +
+      `Steady for ${MIC.pitches.length} of ${STABLE_FRAMES} checks\n` +
+      `Sharp attack seen: ${d.attack === undefined ? '-' : d.attack ? 'yes' : 'no'}   Filter: ${el('listenMode').value}`;
+  }
+
+  // One line that says exactly what to play (this is what clears up guitar's written-versus-sounding octave).
+  function updateMicNote() {
+    if (!currentNote) return;
+    const midi = expectedMidi();
+    const oct = Math.floor(midi / 12) - 1;
+    let text = `Play ${noteName(currentNote)}${oct} (${midiToFreq(midi).toFixed(0)} Hz). `;
+    text += el('octaveMode').value === 'any' ? 'Any octave is accepted.' : 'Exact octave required.';
+    el('micNote').textContent = text;
+  }
+
+  function micStep() {
+    MIC.analyser.getFloatTimeDomainData(MIC.buf);
+    const sampleRate = MIC.ctx.sampleRate;
+    const recent = MIC.buf.subarray(MIC.buf.length - 4096);   // newest 4096 samples, used for pitch
+
+    // How loud is it?
+    let sum = 0;
+    for (let i = 0; i < recent.length; i++) sum += recent[i] * recent[i];
+    const rms = Math.sqrt(sum / recent.length);
+    el('meterFill').style.width = Math.min(100, rms * 400) + '%';
+    MIC.dbg.rms = rms;
+
+    const now = performance.now();
+
+    // While calibrating, just measure the room.
+    if (MIC.calibrating) {
+      MIC.calSamples.push(rms);
+      if (MIC.calSamples.length >= CAL_FRAMES) finishCalibration();
+      return;
+    }
+
+    // While calibrating with the student's instrument, just measure the held note.
+    if (MIC.noteCal) { noteCalStep(rms, recent, sampleRate); return; }
+
+    const strict = el('listenMode').value === 'strict';
+
+    // Strict mode: notice the moment a key is struck or a string is plucked.
+    if (strict) {
+      detectOnsets(MIC.buf, sampleRate, MIC.gate * 1.5).forEach(index => {
+        const startedAt = now - ((MIC.buf.length - index) / sampleRate) * 1000;
+        if (startedAt - MIC.lastOnset > 100) MIC.lastOnset = startedAt;   // same attack seen twice counts once
+      });
+    }
+
+    if (now < MIC.pausedUntil) return;   // brief pause after an answer
+
+    // Quiet: reset, and after 0.3s of quiet the same note is allowed again.
+    if (rms < MIC.gate) {
+      MIC.quietMs += FRAME_MS;
+      if (MIC.quietMs >= 300) MIC.lastAnswered = null;
+      MIC.candidate = null; MIC.pitches = []; MIC.unclear = 0;
+      setHearing('');
+      // A sound just under the gate is the usual reason a quiet instrument seems to be ignored.
+      if (!locked && rms >= 0.5 * MIC.gate && now - MIC.lastAnswerTime > 1500) {
+        setWhy('That is almost too quiet for me to hear. Play a little louder or closer to the microphone, or press "Calibrate with my instrument".');
+      } else setWhy('');
+      return;
+    }
+    MIC.quietMs = 0;
+
+    const result = yinDetect(recent, sampleRate);
+    if (!result || result.clarity < MIN_CLARITY) {
+      MIC.candidate = null; MIC.pitches = [];
+      MIC.unclear++;
+      if (MIC.unclear >= 6) setWhy('I can hear a sound but not a clear note. Play one string (or key) at a time and keep the microphone close.');
+      return;
+    }
+    MIC.unclear = 0;
+
+    const exactPitch = 69 + 12 * Math.log2(result.freq / 440);    // MIDI number with decimals
+    const midi = Math.round(exactPitch);
+    setHearing(`Hearing: ${pitchLabel(midi)}`);
+    MIC.dbg.freq = result.freq; MIC.dbg.clarity = result.clarity; MIC.dbg.midi = midi;
+    MIC.dbg.cents = Math.round((exactPitch - midi) * 100);
+
+    // The same note has to hold steady for a moment before it counts as an answer.
+    if (midi === MIC.candidate) {
+      MIC.pitches.push(exactPitch);
+      if (MIC.pitches.length > STABLE_FRAMES) MIC.pitches.shift();
+    } else {
+      MIC.candidate = midi;
+      MIC.pitches = [exactPitch];
+    }
+
+    const heldLongEnough = MIC.pitches.length >= STABLE_FRAMES;
+    // Strict mode also needs a sharp attack since the last answer, and a pitch that barely wanders.
+    const steady = !strict || steadyPitch(MIC.pitches, MAX_PITCH_SPREAD);
+    const attacked = !strict ||
+      (MIC.lastOnset > MIC.lastAnswerTime && now - MIC.lastOnset <= ONSET_WINDOW_MS);
+    MIC.dbg.attack = attacked;
+
+    // Say why a clear, held note is still being ignored.
+    if (heldLongEnough && midi !== MIC.lastAnswered) {
+      if (!steady) setWhy('The pitch is wobbling too much for "plucked or struck notes only". Play it steadily, or switch the Sound filter to "Any sound".');
+      else if (!attacked) setWhy('I hear a steady note but not a sharp pluck or strike. Pluck or strike it again, or switch the Sound filter to "Any sound".');
+      else setWhy('');
+    }
+
+    // A note that is still ringing from the last answer is ignored until it fades
+    // or the student plays something different.
+    if (heldLongEnough && steady && attacked && midi !== MIC.lastAnswered) micAnswer(midi);
+  }
+
+  // Check a note heard from the microphone.
+  function micAnswer(heardMidi) {
+    if (locked) return;
+    const expected = expectedMidi();
+    const exact = el('octaveMode').value === 'exact';
+    const samePitchClass = ((heardMidi - expected) % 12 + 12) % 12 === 0;
+    const ok = exact ? heardMidi === expected : samePitchClass;
+
+    MIC.lastAnswered = heardMidi;
+    MIC.lastAnswerTime = performance.now();
+    setWhy('', true);
+    const feedback = el('feedback');
+
+    // Only the first try on each note counts toward the score.
+    if (!attempted) {
+      attempted = true;
+      total++;
+      if (ok) { score++; streak++; } else { streak = 0; }
+      updateScoreboard();
+    }
+
+    if (ok) {
+      locked = true;
+      feedback.textContent = `Correct! That's ${noteName(currentNote)}.`;
+      feedback.className = 'good';
+      MIC.pausedUntil = performance.now() + 1200;
+      scheduleNext(1100);
+    } else {
+      // Wrong: stay on the same note so the student can try again.
+      if (exact && samePitchClass) {
+        // Name the instrument setting, since a wrong setting is the usual cause of this message.
+        feedback.textContent = `Right note (${pitchLabel(heardMidi)}), wrong octave for ${isGuitar() ? 'guitar' : 'piano'}. Try again.`;
+      } else {
+        feedback.textContent = `I heard ${pitchLabel(heardMidi)}. Try again.`;
+      }
+      feedback.className = 'bad';
+      MIC.pausedUntil = performance.now() + 700;
+    }
+  }
+
+  // ---------- 9. BUTTONS, KEYBOARD, MENUS ----------
+  const buttonsDiv = el('buttons');
+  LETTERS.forEach(letter => {
+    const b = document.createElement('button');
+    b.textContent = letter.toUpperCase();
+    b.addEventListener('click', () => answer(letter));
+    buttonsDiv.appendChild(b);
+  });
+
+  document.addEventListener('keydown', e => {
+    if (el('mode').value !== 'buttons') return;
+    if (e.target.tagName === 'SELECT') return;
+    const key = e.key.toLowerCase();
+    if (el('accidentals').value === 'on') {
+      if (key === '#' || key === '+') { setAcc('#'); return; }
+      if (key === '-') { setAcc('b'); return; }
+      if (key === 'n') { setAcc(''); return; }
+    }
+    if (LETTERS.includes(key)) answer(key);               // press A-G on the keyboard
+  });
+
+  el('clef').addEventListener('change', () => {
+    currentNote = null;
+    nextQuestion();
+  });
+
+  el('instrument').addEventListener('change', () => {
+    // Guitar always uses treble clef, so lock the clef menu while guitar is selected.
+    if (isGuitar()) el('clef').value = 'treble';
+    el('clef').disabled = isGuitar();
+    refreshControls();
+    currentNote = null;
+    nextQuestion();
+  });
+
+  // Sharp/flat/natural buttons (button mode only, and only when Accidentals is on).
+  const accBtns = {};
+  [['b', '♭'], ['', '♮'], ['#', '♯']].forEach(([val, symbol]) => {
+    const b = document.createElement('button');
+    b.textContent = symbol;
+    b.addEventListener('click', () => setAcc(val));
+    el('accButtons').appendChild(b);
+    accBtns[val] = b;
+  });
+  function setAcc(val) {
+    selectedAcc = val;
+    Object.keys(accBtns).forEach(v => accBtns[v].classList.toggle('sel', v === val));
+  }
+
+  // Show the right controls for the chosen mode.
+  function refreshControls() {
+    const micMode = el('mode').value === 'mic';
+    const accOn = el('accidentals').value === 'on';
+    buttonsDiv.style.display = micMode ? 'none' : 'flex';
+    el('accRow').style.display = (!micMode && accOn) ? 'block' : 'none';
+    el('guitarHint').style.display = isGuitar() ? 'block' : 'none';
+    el('micPanel').style.display = micMode ? 'block' : 'none';
+  }
+
+  el('mode').addEventListener('change', () => {
+    refreshControls();
+    if (el('mode').value !== 'mic') stopMic();
+    nextQuestion();
+  });
+
+  el('accidentals').addEventListener('change', () => {
+    refreshControls();
+    currentNote = null;
+    nextQuestion();
+  });
+
+  el('micToggle').addEventListener('click', () => {
+    if (MIC.running) stopMic(); else startMic();
+  });
+
+  el('micCalibrate').addEventListener('click', () => {
+    if (MIC.running) beginCalibration();
+  });
+
+  el('micCalibrateNote').addEventListener('click', beginNoteCalibration);
+
+  el('octaveMode').addEventListener('change', updateMicNote);
+  el('debugMode').addEventListener('change', () => { if (!MIC.running) renderDebug(); });
+
+  // ---------- 10. REMEMBER SETTINGS ----------
+  // Menu choices are saved in this browser so they are still there next time.
+  const SETTING_IDS = ['instrument', 'clef', 'accidentals', 'mode', 'listenMode', 'octaveMode'];
+
+  function saveSettings() {
+    try {
+      const data = {};
+      SETTING_IDS.forEach(id => { data[id] = el(id).value; });
+      window.localStorage.setItem('noteTrainerSettings', JSON.stringify(data));
+    } catch (e) { /* storage unavailable: settings just won't be remembered */ }
+  }
+
+  function restoreSettings() {
+    try {
+      const data = JSON.parse(window.localStorage.getItem('noteTrainerSettings') || '{}');
+      SETTING_IDS.forEach(id => {
+        const select = el(id);
+        const allowed = Array.from(select.options || []).map(o => o.value);   // only accept values the menu really has
+        if (data[id] && allowed.includes(data[id])) select.value = data[id];
+      });
+    } catch (e) { /* nothing saved yet, or storage unavailable */ }
+  }
+
+  SETTING_IDS.forEach(id => el(id).addEventListener('change', saveSettings));
+
+  // ---------- 11. START ----------
+  restoreSettings();
+  if (isGuitar()) el('clef').value = 'treble';          // guitar always reads treble clef
+  el('clef').disabled = isGuitar();
+  refreshControls();
+  nextQuestion();
+</script>
+</body>
+</html>

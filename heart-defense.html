@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Heart Defense</title>
+  <style>
+    :root {
+      --bg: #04060b;
+      --panel: rgba(255, 255, 255, 0.06);
+      --panel-hover: rgba(255, 255, 255, 0.11);
+      --line: rgba(255, 255, 255, 0.16);
+      --text: #eef2ff;
+      --muted: #9aa3b8;
+      --heart: #ff3b4e;
+      --good: #5ee6a8;
+      --bad: #ff6b6b;
+      --target: #7fe7ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overscroll-behavior: none; }
+    body { -webkit-tap-highlight-color: transparent; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+    button { font-family: inherit; }
+    button:focus-visible { outline: 3px solid var(--target); outline-offset: 2px; }
+
+    #app { height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto 1fr auto; max-width: 1100px; margin: 0 auto; }
+
+    /* Top bar */
+    #hud { display: flex; align-items: center; gap: 18px; padding: 10px 16px; }
+    #hearts { display: flex; gap: 4px; }
+    #hearts svg { width: 28px; height: 26px; display: block; transition: transform 0.2s; }
+    #hearts svg.lost path { fill: none; stroke: rgba(255, 59, 78, 0.45); stroke-width: 2; }
+    #hearts svg.gained { transform: scale(1.35); }
+    .stat { display: flex; flex-direction: column; line-height: 1.1; min-width: 44px; }
+    .stat span { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .stat b { font-size: 1.2rem; font-variant-numeric: tabular-nums; }
+    #hudMult { color: var(--good); font-style: normal; font-size: 0.85rem; margin-left: 4px; }
+    #pauseBtn { margin-left: auto; width: 44px; height: 44px; border-radius: 12px; border: 1.5px solid var(--line);
+      background: var(--panel); color: var(--text); font-size: 1rem; font-weight: 700; cursor: pointer; }
+
+    /* Play area */
+    #arenaWrap { position: relative; min-height: 0; }
+    #arena { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; }
+    #banner { position: absolute; left: 0; right: 0; top: 9%; text-align: center; pointer-events: none;
+      font-size: clamp(1.5rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: 0.06em;
+      opacity: 0; transform: translateY(6px); transition: opacity 0.3s, transform 0.3s;
+      text-shadow: 0 0 18px rgba(127, 231, 255, 0.55); }
+    #banner small { display: block; font-size: 0.45em; font-weight: 600; letter-spacing: 0.04em; color: var(--muted); text-shadow: none; margin-top: 4px; }
+    #banner.show { opacity: 1; transform: none; }
+
+    /* Answer buttons */
+    footer { padding: 8px 16px calc(14px + env(safe-area-inset-bottom)); }
+    #choices { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; max-width: 560px; margin: 0 auto; }
+    #choices button { min-height: 68px; font-size: 1.9rem; font-weight: 800; color: var(--text);
+      background: var(--panel); border: 1.5px solid var(--line); border-radius: 16px; cursor: pointer;
+      transition: transform 0.08s, background 0.15s, border-color 0.15s, opacity 0.15s; }
+    #choices button .key { display: block; font-size: 0.66rem; color: var(--muted); font-weight: 600; margin-top: 2px; }
+    #choices button:hover:not(:disabled) { background: var(--panel-hover); }
+    #choices button:active:not(:disabled) { transform: scale(0.96); }
+    #choices button:disabled { cursor: default; opacity: 0.35; }
+    #choices button.wrong { border-color: var(--bad); color: var(--bad); text-decoration: line-through; opacity: 0.45; }
+    #choices button.right { background: rgba(94, 230, 168, 0.22); border-color: var(--good); }
+    #hint { text-align: center; font-size: 0.78rem; color: var(--muted); margin-top: 8px; min-height: 1.2em; }
+
+    /* Start, pause and game-over screens */
+    .overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 10;
+      background: rgba(4, 6, 11, 0.84); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); padding: 16px; }
+    .overlay.show { display: flex; }
+    .card { max-width: 430px; width: 100%; text-align: center; background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--line); border-radius: 22px; padding: 28px 22px; }
+    .card h1, .card h2 { margin: 0 0 8px; letter-spacing: 0.03em; }
+    .card h1 { font-size: 2.3rem; }
+    .card h1 .h { color: var(--heart); text-shadow: 0 0 20px rgba(255, 59, 78, 0.6); }
+    .card p { color: var(--muted); line-height: 1.5; margin: 8px 0; }
+    .card ul { text-align: left; color: var(--muted); line-height: 1.55; padding-left: 20px; margin: 12px 0 20px; }
+    .card ul b { color: var(--text); }
+    .primary { font-size: 1.2rem; font-weight: 800; padding: 14px 30px; min-height: 54px; border-radius: 14px; border: 0;
+      background: var(--heart); color: #fff; cursor: pointer; box-shadow: 0 0 26px rgba(255, 59, 78, 0.45); }
+    .primary:active { transform: scale(0.97); }
+    .small { font-size: 0.8rem; color: var(--muted); margin-top: 14px; }
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0 22px; }
+    .stats-grid div { background: var(--panel); border-radius: 12px; padding: 10px 8px; }
+    .stats-grid b { display: block; font-size: 1.45rem; font-variant-numeric: tabular-nums; }
+    .stats-grid span { font-size: 0.74rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    #newBest { color: var(--good); font-weight: 700; min-height: 1.3em; }
+
+    /* The videos are only a source of frames for the canvas. */
+    video.frames { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+    @media (max-width: 480px) {
+      #hud { gap: 12px; padding: 8px 12px; }
+      #hearts svg { width: 24px; height: 22px; }
+      footer { padding-left: 12px; padding-right: 12px; }
+      #choices { gap: 8px; }
+      #choices button { min-height: 62px; font-size: 1.7rem; }
+      #hint { display: none; }
+    }
+    @media (max-height: 520px) {
+      #hud { padding: 4px 12px; gap: 12px; }
+      #hearts svg { width: 22px; height: 20px; }
+      .stat b { font-size: 1rem; }
+      #pauseBtn { width: 44px; height: 40px; }
+      footer { padding-top: 4px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+      #choices button { min-height: 50px; font-size: 1.5rem; }
+      #choices button .key { display: none; }
+      #hint { display: none; }
+    }
+    /* Settings and microphone setup (start and pause screens) */
+    .card { max-height: calc(100dvh - 32px); overflow-y: auto; }
+    .settings { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 4px 0 14px; }
+    .settings label, .mic-panel label { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem;
+      color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; text-align: left; }
+    select { font: inherit; font-size: 1rem; text-transform: none; letter-spacing: 0; color: var(--text);
+      background: #10141d; border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 10px; min-height: 44px; max-width: 100%; }
+    .mic-panel { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin: 0 0 16px; }
+    .mic-panel[hidden] { display: none; }
+    .mic-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+    .mic-row:first-child { flex-wrap: nowrap; }
+    .mic-row:first-child .secondary { flex-shrink: 0; }
+    .mic-panel .hearing { min-width: 44px; }
+    .mic-row:first-child .meter { min-width: 40px; }
+    /* Keep Start visible while the settings scroll on small screens */
+    #startBtn { position: sticky; bottom: 0; }
+    #startScreen .card { padding-bottom: 18px; }
+    @media (max-width: 400px) { .mic-row:first-child { flex-wrap: wrap; } .mic-row:first-child .meter { flex-basis: 60%; } }
+    #app { grid-template-columns: minmax(0, 1fr); }
+    @media (max-width: 360px) {
+      #hud { gap: 8px; padding: 8px 10px; }
+      #hearts svg { width: 20px; height: 19px; }
+      .stat { min-width: 0; }
+      .stat b { font-size: 1.05rem; }
+    }
+    .mic-selects { align-items: flex-end; }
+    .mic-selects label { flex: 1 1 140px; min-width: 0; }
+    .mic-selects select { width: 100%; }
+    .secondary { font: inherit; font-size: 0.92rem; font-weight: 700; color: var(--text); background: rgba(127, 231, 255, 0.10);
+      border: 1.5px solid rgba(127, 231, 255, 0.45); border-radius: 10px; padding: 8px 12px; min-height: 44px; cursor: pointer; }
+    .secondary:disabled { opacity: 0.4; cursor: default; }
+    .meter { position: relative; height: 10px; border-radius: 5px; background: rgba(255, 255, 255, 0.08); overflow: hidden; flex: 1; min-width: 120px; }
+    .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--good); border-radius: 5px; }
+    .meter .gate { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; opacity: 0.7; left: 0; }
+    .hearing { font-weight: 800; min-width: 74px; text-align: right; font-variant-numeric: tabular-nums; }
+    .mic-status { font-size: 0.86rem; color: var(--muted); line-height: 1.45; margin: 6px 0 0; min-height: 1.4em; }
+
+    /* During play in microphone mode the buttons are replaced by a listening strip */
+    #micStrip { max-width: 560px; margin: 0 auto; }
+    #micStrip[hidden], #choices[hidden], #hint[hidden], ul[hidden] { display: none; }
+    #micStrip .mic-row { margin: 4px 0; }
+    #micStrip .hearing { font-size: 1.4rem; min-width: 110px; }
+    #micStrip .mic-status { text-align: center; }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header id="hud">
+      <div id="hearts" role="img" aria-label="3 hearts left"></div>
+      <div class="stat"><span>Wave</span><b id="hudWave">1</b></div>
+      <div class="stat"><span>Score</span><b id="hudScore">0</b></div>
+      <div class="stat"><span>Streak</span><b><span id="hudStreak">0</span><em id="hudMult"></em></b></div>
+      <button id="pauseBtn" aria-label="Pause">II</button>
+    </header>
+
+    <main id="arenaWrap">
+      <canvas id="arena" role="img" aria-label="Bubbles with notes floating toward a heart. The glowing bubble is the one to answer."></canvas>
+      <div id="banner" aria-hidden="true"></div>
+    </main>
+
+    <footer>
+      <div id="choices" role="group" aria-label="Name the note in the glowing bubble"></div>
+      <div id="micStrip" hidden>
+        <div class="mic-row">
+          <span aria-hidden="true">🎤</span>
+          <div class="meter" aria-hidden="true"><div class="fill" id="stripLevel"></div><div class="gate" id="stripGate"></div></div>
+          <div class="hearing" id="stripHearing" aria-live="off">–</div>
+        </div>
+        <p class="mic-status" id="stripStatus"></p>
+      </div>
+      <div id="hint">Keys 1–4 or the letter. Tap a bubble to aim at it. Esc pauses.</div>
+    </footer>
+  </div>
+
+  <div id="status" class="sr" role="status" aria-live="polite"></div>
+
+  <div class="overlay show" id="startScreen">
+    <div class="card">
+      <h1>Heart <span class="h">Defense</span></h1>
+      <p>Bubbles carry notes toward your heart.</p>
+      <ul id="rulesButtons">
+        <li><b>Name the note</b> in the glowing bubble to pop it.</li>
+        <li>A wrong answer lets it keep coming. <b>Tap another bubble</b> to aim at it.</li>
+        <li>Three bubbles reach the heart and the game is over. <b>10 in a row</b> wins a heart back.</li>
+      </ul>
+      <ul id="rulesMic" hidden>
+        <li><b>Play the note</b> of any bubble on your instrument to pop it.</li>
+        <li>A note no bubble has counts as wrong.</li>
+        <li>Three bubbles reach the heart and the game is over. <b>10 in a row</b> wins a heart back.</li>
+      </ul>
+      <div class="settings">
+        <label>Instrument
+          <select id="instSel">
+            <option value="piano">Piano</option>
+            <option value="guitar">Guitar</option>
+          </select>
+        </label>
+        <label>Answer with
+          <select id="modeSel">
+            <option value="buttons">Buttons</option>
+            <option value="mic">Microphone</option>
+          </select>
+        </label>
+        <label>Speed
+          <select id="speedSel">
+            <option value="relaxed">Relaxed</option>
+            <option value="normal">Normal</option>
+            <option value="fast">Fast</option>
+          </select>
+        </label>
+      </div>
+      <div id="micSlotStart"></div>
+      <button class="primary" id="startBtn">Start</button>
+      <p class="small">Treble clef · <span id="bestLine">No best score yet</span></p>
+      <p class="small">No sign-up. This game collects no information: scores stay on this device, and microphone sound is analysed here and never sent anywhere.</p>
+    </div>
+  </div>
+
+  <div class="overlay" id="pauseScreen">
+    <div class="card">
+      <h2>Paused</h2>
+      <p>The bubbles will wait.</p>
+      <div id="micSlotPause"></div>
+      <button class="primary" id="resumeBtn">Resume</button>
+    </div>
+  </div>
+
+  <!-- Microphone setup. It is moved into the start or pause screen, whichever is showing. -->
+  <div class="mic-panel" id="micPanel" hidden>
+    <div class="mic-row">
+      <button class="secondary" id="micOnBtn">Turn on microphone</button>
+      <div class="meter" aria-hidden="true"><div class="fill" id="panelLevel"></div><div class="gate" id="panelGate"></div></div>
+      <div class="hearing" id="panelHearing">–</div>
+    </div>
+    <p class="mic-status" id="panelStatus" role="status" aria-live="polite">Turn on the microphone, stay quiet for a second while it measures the room, then play a note to check it hears you.</p>
+    <div class="mic-row">
+      <button class="secondary" id="calNoteBtn" disabled>Calibrate with my instrument</button>
+      <button class="secondary" id="calRoomBtn" disabled>Re-measure room</button>
+    </div>
+    <div class="mic-row mic-selects">
+      <label>Octave
+        <select id="octaveSel">
+          <option value="any">Any octave</option>
+          <option value="exact">Exact octave</option>
+        </select>
+      </label>
+      <label>Sound filter
+        <select id="filterSel">
+          <option value="strict">Plucked or struck only (ignores voices)</option>
+          <option value="any">Any sound (voice, wind, bowed)</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="overlay" id="overScreen">
+    <div class="card">
+      <h2>Game over</h2>
+      <p id="newBest"></p>
+      <div class="stats-grid" id="overStats"></div>
+      <button class="primary" id="againBtn">Play again</button>
+    </div>
+  </div>
+
+  <!-- Shared music engine, then the game rules, then the screen. -->
+  <script src="js/music-engine.js"></script>
+  <script src="js/glyphs.js"></script>
+  <script src="js/staff-svg.js"></script>
+  <script src="js/mic-listener.js"></script>
+  <script src="js/heart-defense-game.js"></script>
+  <script src="js/heart-defense-view.js"></script>
+</body>
+</html>
